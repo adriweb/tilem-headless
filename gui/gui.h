@@ -305,6 +305,10 @@ void tilem_link_receive_group(TilemCalcEmulator *emu,
                               GSList *entries,
                               const char *destination);
 
+/* Receive all variables and save them to a single file. */
+void tilem_link_receive_all(TilemCalcEmulator *emu,
+                            const char *destination);
+
 /* Receive variables with names matching a pattern.  PATTERN is a
    glob-like pattern in UTF-8.  Files will be written out to
    DESTDIR. */
