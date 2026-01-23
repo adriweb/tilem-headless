@@ -34,6 +34,7 @@
 #include "files.h"
 #include "icons.h"
 #include "msgbox.h"
+#include "sdlui.h"
 #include "../headless/script.h"
 #include "trace.h"
 
@@ -53,6 +54,7 @@ static gchar* cl_macro_to_run = NULL;
 static gboolean cl_debug_flag = FALSE;
 static gboolean cl_normalspeed_flag = FALSE;
 static gboolean cl_fullspeed_flag = FALSE;
+static gboolean cl_sdl_flag = FALSE;
 static gboolean cl_headless_flag = FALSE;
 static gchar* cl_headless_screenshot = NULL;
 static gchar* cl_headless_record = NULL;
@@ -78,6 +80,7 @@ static GOptionEntry entries[] =
 	{ "debug", 'd', 0, G_OPTION_ARG_NONE, &cl_debug_flag, "Launch debugger", NULL },
 	{ "normal-speed", 0, 0, G_OPTION_ARG_NONE, &cl_normalspeed_flag, "Run at normal speed", NULL },
 	{ "full-speed", 0, 0, G_OPTION_ARG_NONE, &cl_fullspeed_flag, "Run at maximum speed", NULL },
+	{ "sdl", 0, 0, G_OPTION_ARG_NONE, &cl_sdl_flag, "Use SDL2 UI", NULL },
 	{ "headless", 0, 0, G_OPTION_ARG_NONE, &cl_headless_flag, "Run without the GUI", NULL },
 	{ "headless-delay", 0, 0, G_OPTION_ARG_DOUBLE, &cl_headless_delay, "Seconds to wait before capture/exit in headless mode", "SECONDS" },
 	{ "headless-screenshot", 0, 0, G_OPTION_ARG_FILENAME, &cl_headless_screenshot, "Save a screenshot to FILE in headless mode", "FILE" },
@@ -379,6 +382,7 @@ int main(int argc, char **argv)
 	GError *error = NULL;
 	int model = 0;
 	gboolean use_headless = FALSE;
+	gboolean want_sdl = FALSE;
 	char *format = NULL;
 	TilemAnimation *anim = NULL;
 	int i;
@@ -393,19 +397,34 @@ int main(int argc, char **argv)
 	g_thread_init(NULL);
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--headless")
-		    || g_str_has_prefix(argv[i], "--headless=")) {
+		    || g_str_has_prefix(argv[i], "--headless="))
 			use_headless = TRUE;
-			break;
-		}
+		else if (!strcmp(argv[i], "--sdl"))
+			want_sdl = TRUE;
 	}
 
 	set_program_path(argv[0]);
 	g_set_application_name("TilEm");
 
-	if (!use_headless)
+	if (!use_headless && !want_sdl)
 		gtk_init(&argc, &argv);
 
-	if (!use_headless) {
+	context = g_option_context_new(NULL);
+	g_option_context_add_main_entries(context, entries, NULL);
+	if (!use_headless && !want_sdl)
+		g_option_context_add_group(context, gtk_get_option_group(FALSE));
+	if (!g_option_context_parse(context, &argc, &argv, &error))
+	{
+		g_printerr("%s: %s\n", g_get_prgname(), error->message);
+		exit (1);
+	}
+
+	if (cl_sdl_flag && cl_headless_flag) {
+		g_printerr("Use either --sdl or --headless, not both.\n");
+		return 1;
+	}
+
+	if (!cl_sdl_flag && !cl_headless_flag) {
 		menurc_path = get_shared_file_path("menurc", NULL);
 		if (menurc_path)
 			gtk_accel_map_load(menurc_path);
@@ -417,16 +436,6 @@ int main(int argc, char **argv)
 
 	emu = tilem_calc_emulator_new();
 
-	context = g_option_context_new(NULL);
-	g_option_context_add_main_entries(context, entries, NULL);
-	if (!use_headless)
-		g_option_context_add_group(context, gtk_get_option_group(FALSE));
-	if (!g_option_context_parse(context, &argc, &argv, &error))
-	{
-		g_printerr("%s: %s\n", g_get_prgname(), error->message);
-		exit (1);
-	}
-
 	if (cl_model) {
 		model = name_to_model(cl_model);
 		if (!model) {
@@ -435,7 +444,6 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-
 	if (cl_headless_flag && cl_debug_flag) {
 		g_printerr("Headless mode does not support the debugger.\n");
 		return 1;
@@ -452,6 +460,25 @@ int main(int argc, char **argv)
 	if (cl_headless_trace && cl_headless_trace_backtrace) {
 		g_printerr("Use either --trace or --trace-backtrace, not both.\n");
 		return 1;
+	}
+
+	if (cl_sdl_flag) {
+		TilemSdlOptions sdl_opts;
+		int status;
+
+		memset(&sdl_opts, 0, sizeof(sdl_opts));
+		sdl_opts.romfile = cl_romfile;
+		sdl_opts.statefile = cl_statefile;
+		sdl_opts.skinfile = cl_skinfile;
+		sdl_opts.model = model;
+		sdl_opts.skinless = cl_skinless_flag;
+		sdl_opts.reset = cl_reset_flag;
+		sdl_opts.normal_speed = cl_normalspeed_flag;
+		sdl_opts.full_speed = cl_fullspeed_flag;
+
+		status = tilem_sdl_run(emu, &sdl_opts);
+		tilem_calc_emulator_free(emu);
+		return status;
 	}
 
 	load_initial_rom(emu, cl_romfile, cl_statefile, cl_files_to_load, model,
